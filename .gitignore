@@ -1,0 +1,52 @@
+# Byte-compiled / cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+env/
+.env
+
+# IDEs and editors
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs and build artifacts
+*.log
+logs/
+build/
+dist/
+.ipynb_checkpoints/
+.pytest_cache/
+
+# Binary & compiler artifacts
+*.exe
+*.zip
+*.tar
+*.tar.gz
+*.7z
+*.pdf
+*.tex
+
+# Supplementary Documentation & Interview Study Notes (Keep local)
+MASTER_PROJECT_DOCUMENTATION.md
+PROJECT_REPORT.md
+PROJECT_CONTEXT.md
+Documentations/
+
+# Large Datasets & Model Weights
+galaxy_master_dataset.csv
+images_gz2/
+checkpoints/
+outputs/
+*.pth
+*.pt
+*.csv

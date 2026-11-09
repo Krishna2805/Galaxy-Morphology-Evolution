@@ -1,0 +1,12 @@
+torch
+torchvision
+pandas
+numpy
+scikit-learn
+matplotlib
+seaborn
+umap-learn
+Pillow
+tqdm
+streamlit>=1.35.0
+plotly>=6.6.0
