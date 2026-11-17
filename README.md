@@ -1,8 +1,9 @@
 # Galaxy Morphology Evolution Lab
 
+[![Hugging Face Model](https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-Weights%20%26%20Data-FFD21E)](https://huggingface.co/Krishna2805/galaxy-morphology-weights)
 ![Streamlit Status](https://img.shields.io/badge/Streamlit-App_Live-FF4B4B?logo=streamlit)
 ![PyTorch](https://img.shields.io/badge/PyTorch-2.1%2B-EE4C2C?logo=pytorch)
-![Python 3.13+](https://img.shields.io/badge/Python-3.13%2B-3776AB?logo=python)
+![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB?logo=python)
 
 An end-to-end deep learning and observational astrophysics pipeline designed to investigate **how galaxy morphology evolves across cosmic lookback time**. By combining optical multi-spectral image cutouts from the Sloan Digital Sky Survey (SDSS DR7 / Galaxy Zoo 2) with 6 spectroscopic metadata features, the system mitigates cosmological resolution degradation bias and quantifies high-dimensional latent space centroid drift across cosmic redshift bins (`low_z → mid_z → high_z`).
 
@@ -49,19 +50,29 @@ Galaxy-Morphology-Evolution/
 
 ---
 
-## 📥 Dataset Acquisition & Setup
+## ☁️ Hugging Face Model Weights & Dataset Auto-Downloader
 
-Due to GitHub repository limits, raw cutout images and full dataset tables are excluded from version control.
+Trained model checkpoints and dataset tables are hosted on the Hugging Face model repository:  
+👉 [**`Krishna2805/galaxy-morphology-weights`**](https://huggingface.co/Krishna2805/galaxy-morphology-weights)
 
-### 1. Required Files
-To run the full training or extraction pipelines, place the following in the project root:
-- **`galaxy_master_dataset.csv`**: Metadata CSV with SDSS galaxy IDs (`dr7objid`), morphology classes (`disk`, `edge_on`, `smooth`, `spiral`), spectroscopic redshift (`redshift`), and photometry.
-- **`images_gz2/`**: Subfolder containing 224x224 RGB JPEG galaxy cutouts named by ID (e.g. `110939.jpg`).
+The application automatically streams and caches the following files to `checkpoints/` and the project root on first execution via `huggingface_hub`:
+- **`multimodal_resnet18.pth`** (~45.5 MB): Pretrained PyTorch weights for `MultimodalFusionNet`
+- **`metadata_stats.pth`** (~1.9 KB): Normalization means and standard deviations for tabular spectroscopic metadata
+- **`galaxy_master_dataset.csv`** (~10.2 MB): Full 47,089-galaxy dataset table containing SDSS dr7objid, spectroscopic redshift, morphology classes, and photometric parameters
 
-### 2. Sources
-- **Dataset**: Galaxy Zoo 2 (SDSS DR7)
-- **Primary Data Portal**: [Galaxy Zoo 2 Data Tables (Data-GZ2)](https://data.galaxyzoo.org/)
-- **Kaggle Mirror**: [Galaxy Zoo Challenge Data](https://www.kaggle.com/c/galaxy-zoo-the-galaxy-challenge/data)
+**1-Line Verification Command:**
+```bash
+python -c "import galaxy_app; galaxy_app.ensure_weights_and_data(); print('Galaxy weights and dataset verified from Hugging Face!')"
+```
+
+---
+
+## 📥 Dataset Acquisition & Cutouts
+
+- **Master Table**: Automatically downloaded via the Hugging Face auto-downloader as documented above.
+- **Raw Optical Cutouts (`images_gz2/`)**: If training vision backbones from scratch, 224x224 RGB JPEG galaxy cutouts can be acquired from:
+  - **Primary Data Portal**: [Galaxy Zoo 2 Data Tables (Data-GZ2)](https://data.galaxyzoo.org/)
+  - **Kaggle Mirror**: [Galaxy Zoo Challenge Data](https://www.kaggle.com/c/galaxy-zoo-the-galaxy-challenge/data)
 
 ---
 
