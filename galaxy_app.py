@@ -104,12 +104,74 @@ OUTPUT_DIR = os.path.join(os.path.abspath(os.path.dirname(__file__)), "outputs")
 CHECKPOINT_DIR = os.path.join(os.path.abspath(os.path.dirname(__file__)), "checkpoints")
 IMG_DIR = os.path.join(os.path.abspath(os.path.dirname(__file__)), "images_gz2")
 MASTER_CSV = os.path.join(os.path.abspath(os.path.dirname(__file__)), "galaxy_master_dataset.csv")
+HF_REPO_ID = "Krishna2805/galaxy-morphology-weights"
+
+
+def ensure_weights_and_data():
+    """Ensure essential model checkpoints and master dataset exist, downloading from Hugging Face if missing."""
+    import shutil
+    try:
+        from huggingface_hub import hf_hub_download
+    except ImportError:
+        return
+
+    os.makedirs(CHECKPOINT_DIR, exist_ok=True)
+    needed_files = [
+        ("galaxy_master_dataset.csv", MASTER_CSV),
+        ("multimodal_resnet18.pth", os.path.join(CHECKPOINT_DIR, "multimodal_resnet18.pth")),
+        ("metadata_stats.pth", os.path.join(CHECKPOINT_DIR, "metadata_stats.pth")),
+    ]
+
+    missing = [(fname, target) for fname, target in needed_files if not os.path.exists(target)]
+    if not missing:
+        return
+
+    in_streamlit = False
+    try:
+        if st.runtime.exists():
+            in_streamlit = True
+    except Exception:
+        pass
+
+    if in_streamlit:
+        status_box = st.info(f"Downloading {len(missing)} missing weight/dataset file(s) from Hugging Face ({HF_REPO_ID})...")
+        progress_bar = st.progress(0.0)
+    else:
+        print(f"[Galaxy Lab] Downloading {len(missing)} missing file(s) from Hugging Face ({HF_REPO_ID})...")
+
+    for i, (fname, target_path) in enumerate(missing):
+        progress_val = float(i) / len(missing)
+        if in_streamlit:
+            progress_bar.progress(progress_val, text=f"Downloading {fname} ({i+1}/{len(missing)})...")
+        else:
+            print(f"  Downloading {fname} ({i+1}/{len(missing)})...")
+
+        try:
+            downloaded = hf_hub_download(
+                repo_id=HF_REPO_ID,
+                filename=fname,
+                repo_type="model"
+            )
+            shutil.copyfile(downloaded, target_path)
+        except Exception as e:
+            if in_streamlit:
+                st.error(f"Failed to download {fname} from Hugging Face: {e}")
+            else:
+                print(f"Failed to download {fname}: {e}")
+
+    if in_streamlit:
+        progress_bar.progress(1.0, text="Download complete!")
+        status_box.success("Model weights and dataset verified.")
+        status_box.empty()
+        progress_bar.empty()
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Data loaders (cached)
 # ─────────────────────────────────────────────────────────────────────────────
 @st.cache_data(show_spinner=False)
 def load_master():
+    ensure_weights_and_data()
     if not os.path.exists(MASTER_CSV):
         return None
     df = pd.read_csv(MASTER_CSV)
@@ -144,6 +206,7 @@ def load_embeddings_phase4(backbone, method):
 @st.cache_resource(show_spinner=False)
 def load_model(backbone):
     """Load the best multimodal checkpoint for the given backbone."""
+    ensure_weights_and_data()
     from multimodal_model import MultimodalFusionNet
     ckpt_path  = os.path.join(CHECKPOINT_DIR, f"multimodal_{backbone}.pth")
     stats_path = os.path.join(CHECKPOINT_DIR, "metadata_stats.pth")

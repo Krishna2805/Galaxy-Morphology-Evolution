@@ -17,6 +17,7 @@ dependencies = [
     "torchvision>=0.25.0",
     "tqdm>=4.67.3",
     "umap-learn>=0.5.11",
+    "huggingface-hub>=0.20.0",
 ]
 
 [tool.uv.sources]
