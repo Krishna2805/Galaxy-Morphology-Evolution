@@ -36,18 +36,13 @@ dist/
 *.pdf
 *.tex
 
-# Supplementary Documentation & Local Notes (Keep local)
+# Supplementary documentation & scratch notes
 MASTER_PROJECT_DOCUMENTATION.md
 PROJECT_REPORT.md
 PROJECT_CONTEXT.md
 Documentations/
-PROJECT_BACKLOG.md
-.dev_notes.local.md
 *.local.md
 .*.local.md
-*DEFECT*
-*BACKLOG*
-*ISSUE*
 
 # Large Datasets & Model Weights
 galaxy_master_dataset.csv
