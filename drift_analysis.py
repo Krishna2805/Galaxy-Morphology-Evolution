@@ -65,7 +65,8 @@ REDSHIFT_BINS = [
     ("high_z", 0.10, 0.14),   # Marginal for disk/edge_on
 ]
 
-# Extended bin ONLY for smooth galaxies (others lack statistical validity beyond z=0.14)
+# Extended bin ONLY for smooth galaxies (a design choice: beyond z=0.14 the dataset also has 793 spiral,
+# 234 disk and 25 edge_on galaxies; only edge_on is below MIN_BIN_COUNT, but none of them are binned here)
 SMOOTH_EXTENDED_BIN = ("ext_z", 0.14, 0.25)
 
 # Minimum galaxies needed in a bin for a class to be statistically valid

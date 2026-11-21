@@ -1,0 +1,22 @@
+{
+  "baseline_resnet18": {
+    "test_acc": 0.767,
+    "test_f1_macro": 0.688,
+    "n_test": 7064
+  },
+  "efficientnet_b0": {
+    "test_acc": 0.7879,
+    "test_f1_macro": 0.6954,
+    "n_test": 7064
+  },
+  "multimodal_resnet18": {
+    "test_acc": 0.785,
+    "test_f1_macro": 0.7058,
+    "n_test": 7064
+  },
+  "multimodal_efficientnet_b0": {
+    "test_acc": 0.7527,
+    "test_f1_macro": 0.6736,
+    "n_test": 7064
+  }
+}

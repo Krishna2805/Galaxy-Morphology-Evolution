@@ -16,7 +16,9 @@ Run:
 # ── std ─────────────────────────────────────────────────────────────────────
 import os
 import io
+import json
 import random
+import shutil
 
 # ── third-party ─────────────────────────────────────────────────────────────
 import streamlit as st
@@ -100,22 +102,32 @@ div[data-testid="stSidebar"] { background: #0a0a1a; border-right: 1px solid #0f3
 CLASS_NAMES  = ["disk", "edge_on", "smooth", "spiral"]
 CLASS_COLORS = {"disk": "#45B7D1", "edge_on": "#FFA07A", "smooth": "#FF6B6B", "spiral": "#4ECDC4"}
 
-OUTPUT_DIR = os.path.join(os.path.abspath(os.path.dirname(__file__)), "outputs")
-CHECKPOINT_DIR = os.path.join(os.path.abspath(os.path.dirname(__file__)), "checkpoints")
-IMG_DIR = os.path.join(os.path.abspath(os.path.dirname(__file__)), "images_gz2")
-MASTER_CSV = os.path.join(os.path.abspath(os.path.dirname(__file__)), "galaxy_master_dataset.csv")
+ROOT_DIR = os.path.abspath(os.path.dirname(__file__))
+OUTPUT_DIR = os.path.join(ROOT_DIR, "outputs")
+CHECKPOINT_DIR = os.path.join(ROOT_DIR, "checkpoints")
+IMG_DIR = os.path.join(ROOT_DIR, "images_gz2")
+SAMPLE_IMG_DIR = os.path.join(ROOT_DIR, "sample_images")
+MASTER_CSV = os.path.join(ROOT_DIR, "galaxy_master_dataset.csv")
 HF_REPO_ID = "Krishna2805/galaxy-morphology-weights"
 
 
-def ensure_weights_and_data():
-    """Ensure essential model checkpoints and master dataset exist, downloading from Hugging Face if missing."""
-    import shutil
+def _hf_fetch(fname, target_path):
+    """Copy one file from the Hugging Face repo to target_path. Returns True on success."""
     try:
         from huggingface_hub import hf_hub_download
-    except ImportError:
-        return
+        os.makedirs(os.path.dirname(target_path), exist_ok=True)
+        # Copy to a temp name first so an interrupted copy never leaves a truncated file at target_path.
+        shutil.copyfile(hf_hub_download(repo_id=HF_REPO_ID, filename=fname, repo_type="model"), target_path + ".part")
+        os.replace(target_path + ".part", target_path)
+        return True
+    except Exception as e:
+        print(f"[Galaxy Lab] Could not download {fname} from {HF_REPO_ID}: {e}")
+        return False
 
-    os.makedirs(CHECKPOINT_DIR, exist_ok=True)
+
+def ensure_weights_and_data():
+    """Download the dataset CSV + ResNet-18 weights from Hugging Face if missing.
+    Returns True if all of them are present afterwards."""
     needed_files = [
         ("galaxy_master_dataset.csv", MASTER_CSV),
         ("multimodal_resnet18.pth", os.path.join(CHECKPOINT_DIR, "multimodal_resnet18.pth")),
@@ -124,7 +136,7 @@ def ensure_weights_and_data():
 
     missing = [(fname, target) for fname, target in needed_files if not os.path.exists(target)]
     if not missing:
-        return
+        return True
 
     in_streamlit = False
     try:
@@ -146,24 +158,13 @@ def ensure_weights_and_data():
         else:
             print(f"  Downloading {fname} ({i+1}/{len(missing)})...")
 
-        try:
-            downloaded = hf_hub_download(
-                repo_id=HF_REPO_ID,
-                filename=fname,
-                repo_type="model"
-            )
-            shutil.copyfile(downloaded, target_path)
-        except Exception as e:
-            if in_streamlit:
-                st.error(f"Failed to download {fname} from Hugging Face: {e}")
-            else:
-                print(f"Failed to download {fname}: {e}")
+        if not _hf_fetch(fname, target_path) and in_streamlit:
+            st.error(f"Failed to download {fname} from Hugging Face ({HF_REPO_ID}).")
 
     if in_streamlit:
-        progress_bar.progress(1.0, text="Download complete!")
-        status_box.success("Model weights and dataset verified.")
         status_box.empty()
         progress_bar.empty()
+    return all(os.path.exists(target) for _, target in needed_files)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -175,10 +176,38 @@ def load_master():
     if not os.path.exists(MASTER_CSV):
         return None
     df = pd.read_csv(MASTER_CSV)
+    # Full image set if present; otherwise the 32 cutouts committed in sample_images/.
+    img_dir = IMG_DIR if os.path.isdir(IMG_DIR) else SAMPLE_IMG_DIR
     df["image_path"] = df["image_path"].apply(
-        lambda p: os.path.join(IMG_DIR, os.path.basename(str(p)))
+        lambda p: os.path.join(img_dir, os.path.basename(str(p)))
     )
+    df["has_image"] = df["image_path"].map(os.path.exists)
     return df
+
+
+def show_image(path, caption=None):
+    """st.image, or a visible note saying which output file is missing."""
+    if os.path.exists(path):
+        st.image(path, caption=caption, use_container_width=True)
+    else:
+        st.info(f"Not found: `{os.path.relpath(path, ROOT_DIR)}`. It is written by the pipeline scripts (see README → Pipeline).")
+
+
+def load_json(name):
+    """outputs/<name> (written by evaluate_models.py), or None if missing or mid-write. Not cached: tiny files."""
+    try:
+        with open(os.path.join(OUTPUT_DIR, name)) as f:
+            return json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+MODEL_LABELS = {  # key in outputs/test_metrics.json -> (display name, type)
+    "baseline_resnet18":          ("ResNet-18 (image only)",       "Baseline"),
+    "efficientnet_b0":            ("EfficientNet-B0 (image only)", "Baseline"),
+    "multimodal_efficientnet_b0": ("MM EfficientNet-B0",           "Multimodal"),
+    "multimodal_resnet18":        ("MM ResNet-18",                 "Multimodal"),
+}
 
 
 @st.cache_data(show_spinner=False)
@@ -210,11 +239,14 @@ def load_model(backbone):
     from multimodal_model import MultimodalFusionNet
     ckpt_path  = os.path.join(CHECKPOINT_DIR, f"multimodal_{backbone}.pth")
     stats_path = os.path.join(CHECKPOINT_DIR, "metadata_stats.pth")
-    if not os.path.exists(ckpt_path):
-        raise FileNotFoundError(f"Checkpoint not found: {ckpt_path}")
+    if not os.path.exists(ckpt_path) and not _hf_fetch(os.path.basename(ckpt_path), ckpt_path):
+        raise FileNotFoundError(
+            f"`{os.path.basename(ckpt_path)}` is not in checkpoints/ and not hosted on Hugging Face ({HF_REPO_ID}). "
+            f"Train it with `python train_multimodal.py --backbone {backbone}`, or choose ResNet-18."
+        )
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = MultimodalFusionNet(num_classes=4, backbone=backbone, freeze_backbone=False)
-    ckpt  = torch.load(ckpt_path, map_location=device, weights_only=False)
+    ckpt  = torch.load(ckpt_path, map_location=device, weights_only=True)  # downloaded file: never unpickle code
     
     # Check if ckpt is a dict with 'model_state_dict' or just the state_dict itself
     if isinstance(ckpt, dict) and "model_state_dict" in ckpt:
@@ -223,7 +255,7 @@ def load_model(backbone):
         model.load_state_dict(ckpt)
         
     model.to(device).eval()
-    stats = torch.load(stats_path, map_location="cpu", weights_only=False) if os.path.exists(stats_path) else None
+    stats = torch.load(stats_path, map_location="cpu", weights_only=True) if os.path.exists(stats_path) else None
     return model, stats
 
 
@@ -261,12 +293,16 @@ if page == "Home":
     st.markdown('<div class="hero-title">Galaxy Morphology Evolution Lab</div>', unsafe_allow_html=True)
     st.markdown('<div class="hero-sub">How do galaxies change across cosmic time? We trained a multimodal deep learning model to find out.</div>', unsafe_allow_html=True)
 
-    # Top-level metrics
+    # Top-level metrics (accuracy/F1 from outputs/test_metrics.json, drift from outputs/drift_*/)
+    metrics = load_json("test_metrics.json") or {}
+    control = load_json("drift_redshift_control.json") or {}
+    best = max(metrics, key=lambda k: metrics[k]["test_f1_macro"], default=None)
     c1, c2, c3, c4 = st.columns(4)
     with c1:
         st.markdown('<div class="metric-card"><div class="metric-value">47k</div><div class="metric-label">Galaxies</div><div class="metric-sub">SDSS DR7 cutouts</div></div>', unsafe_allow_html=True)
     with c2:
-        st.markdown('<div class="metric-card"><div class="metric-value">78.5%</div><div class="metric-label">Best Accuracy</div><div class="metric-sub">Multimodal ResNet-18</div></div>', unsafe_allow_html=True)
+        value, sub = (f"{metrics[best]['test_f1_macro']:.3f}", f"{MODEL_LABELS[best][0]} · {metrics[best]['test_acc']:.1%} acc") if best else ("n/a", "run evaluate_models.py")
+        st.markdown(f'<div class="metric-card"><div class="metric-value">{value}</div><div class="metric-label">Best Macro-F1</div><div class="metric-sub">{sub}</div></div>', unsafe_allow_html=True)
     with c3:
         st.markdown('<div class="metric-card"><div class="metric-value">4.07</div><div class="metric-label">Max Drift</div><div class="metric-sub">Disk · low→mid z</div></div>', unsafe_allow_html=True)
     with c4:
@@ -278,7 +314,7 @@ if page == "Home":
     st.markdown('<div class="section-header">Project Pipeline</div>', unsafe_allow_html=True)
     p1, p2, p3, p4 = st.columns(4)
     phases = [
-        ("Phase 1", "Baseline Classifier", "ResNet-18 & EfficientNet-B0 image-only models. 76–79% accuracy."),
+        ("Phase 1", "Baseline Classifier", "ResNet-18 & EfficientNet-B0 image-only models. 76.7–78.8% test accuracy."),
         ("Phase 2", "Multimodal Fusion", "Fused image embeddings with spectroscopic metadata (redshift, color, structure)."),
         ("Phase 3", "Centroid Drift", "Extracted 256-d embeddings for all 47k galaxies. Measured class centroid shift across redshift bins."),
         ("Phase 4", "UMAP / t-SNE", "2D visualisation of the embedding space. Clusters reveal learned morphological structure."),
@@ -292,12 +328,21 @@ if page == "Home":
     st.markdown("---")
     # Key scientific findings
     st.markdown('<div class="section-header">Key Findings</div>', unsafe_allow_html=True)
+    z_note = (f" Redshift is also a model input: changing <i>only</i> that input from z = {control['redshift_input_low']} "
+              f"to {control['redshift_input_mid']} (same images) "
+              f"moves the mean embedding by <b>{control['resnet18']:.2f}</b>, so part of every drift comes from the input itself.") if control else ""
     findings = [
-        ("Disk galaxies drift the most", "Euclidean centroid shift of <b>4.07</b> from low-z → mid-z (ResNet-18 model). Likely reflects SDSS resolution degradation at higher redshifts."),
-        ("Spiral galaxies are the most stable", "Mid → high-z drift of only <b>0.99</b> — spiral arm features remain detectable the longest."),
-        ("Smooth galaxies extend furthest", "Only smooth galaxies have statistical validity beyond z = 0.14 (2,210 galaxies in extended bin), confirming the SDSS resolution effect."),
-        ("Multimodal > Image-only", "Adding redshift, color, and structural metadata improved accuracy by ~2% and F1 by ~4% over the image-only baseline."),
+        ("Disk galaxies show the largest centroid shift", "Euclidean shift of <b>4.07</b> from low-z → mid-z (ResNet-18 model)." + z_note),
+        ("Spiral mid → high-z shift is the smallest", "<b>0.99</b>, the lowest of all class/bin transitions (ResNet-18 model)."),
+        ("Smooth galaxies are tracked furthest", "The pipeline bins only smooth galaxies beyond z = 0.14 (2,210 galaxies); their high → ext-z shift is 2.26."),
     ]
+    if all(k in metrics for k in MODEL_LABELS):
+        d = {bb: ((metrics[f"multimodal_{bb}"]["test_acc"] - metrics[base]["test_acc"]) * 100,
+                  (metrics[f"multimodal_{bb}"]["test_f1_macro"] - metrics[base]["test_f1_macro"]) * 100)
+             for bb, base in [("resnet18", "baseline_resnet18"), ("efficientnet_b0", "efficientnet_b0")]}
+        findings.append(("Effect of adding metadata (multimodal vs image-only)",
+                         f"Multimodal vs image-only on the test split: ResNet-18 {d['resnet18'][0]:+.1f} pts accuracy / {d['resnet18'][1]:+.1f} pts macro-F1; "
+                         f"EfficientNet-B0 {d['efficientnet_b0'][0]:+.1f} / {d['efficientnet_b0'][1]:+.1f}."))
     for title, body in findings:
         st.markdown(f'<div class="finding-card"><b>{title}</b><br>{body}</div>', unsafe_allow_html=True)
 
@@ -309,14 +354,15 @@ elif page == "EDA":
     st.markdown("An overview of the Galaxy Zoo 2 dataset before any modelling was done.")
 
     df = load_master()
+    if df is None:
+        st.warning("galaxy_master_dataset.csv not available (Hugging Face download failed); showing the saved figures only.")
 
     tab1, tab2, tab3, tab4, tab5 = st.tabs(["Class Distribution", "Redshift", "Colors", "Structure", "Sample Images"])
 
     with tab1:
         st.markdown('<div class="section-header">Class Distribution</div>', unsafe_allow_html=True)
         eda_img = os.path.join(OUTPUT_DIR, "eda", "class_distribution.png")
-        if os.path.exists(eda_img):
-            st.image(eda_img, use_container_width=True)
+        show_image(eda_img)
 
         if df is not None:
             counts = df["morph_class"].value_counts().reset_index()
@@ -334,8 +380,7 @@ elif page == "EDA":
     with tab2:
         st.markdown('<div class="section-header">Redshift Distribution</div>', unsafe_allow_html=True)
         img = os.path.join(OUTPUT_DIR, "eda", "redshift_per_class.png")
-        if os.path.exists(img):
-            st.image(img, use_container_width=True)
+        show_image(img)
 
         if df is not None:
             fig = px.histogram(
@@ -354,8 +399,7 @@ elif page == "EDA":
     with tab3:
         st.markdown('<div class="section-header">Color–Redshift Correlations</div>', unsafe_allow_html=True)
         img = os.path.join(OUTPUT_DIR, "eda", "color_redshift.png")
-        if os.path.exists(img):
-            st.image(img, use_container_width=True)
+        show_image(img)
 
         if df is not None:
             fig = px.scatter(
@@ -371,8 +415,7 @@ elif page == "EDA":
     with tab4:
         st.markdown('<div class="section-header">Structural Features</div>', unsafe_allow_html=True)
         img = os.path.join(OUTPUT_DIR, "eda", "structural_features.png")
-        if os.path.exists(img):
-            st.image(img, use_container_width=True)
+        show_image(img)
 
         if df is not None:
             fig = px.box(
@@ -387,13 +430,12 @@ elif page == "EDA":
     with tab5:
         st.markdown('<div class="section-header">Sample Galaxy Images</div>', unsafe_allow_html=True)
         img = os.path.join(OUTPUT_DIR, "eda", "sample_images.png")
-        if os.path.exists(img):
-            st.image(img, use_container_width=True)
+        show_image(img)
 
         if df is not None:
             st.markdown("#### Browse Random Galaxies by Class")
             sel_cls = st.selectbox("Filter by class", ["all"] + CLASS_NAMES)
-            subset = df if sel_cls == "all" else df[df["morph_class"] == sel_cls]
+            subset = df[df["has_image"]] if sel_cls == "all" else df[df["has_image"] & (df["morph_class"] == sel_cls)]
             sample = subset.sample(min(12, len(subset)), random_state=random.randint(0, 999))
             cols = st.columns(6)
             for i, (_, row) in enumerate(sample.iterrows()):
@@ -410,14 +452,18 @@ elif page == "Model Performance":
 
     # Summary table
     st.markdown('<div class="section-header">All Models at a Glance</div>', unsafe_allow_html=True)
-    summary = pd.DataFrame([
-        {"Model": "ResNet-18 (image only)",       "Type": "Baseline",   "Test Acc": "76.7%", "Test F1": "0.66"},
-        {"Model": "EfficientNet-B0 (image only)", "Type": "Baseline",   "Test Acc": "78.8%", "Test F1": "0.68"},
-        {"Model": "MM EfficientNet-B0",           "Type": "Multimodal", "Test Acc": "75.3%", "Test F1": "0.67"},
-        {"Model": "MM ResNet-18 (Best)",              "Type": "Multimodal", "Test Acc": "78.5%", "Test F1": "0.71"},
-    ])
-    st.dataframe(summary.style.highlight_max(axis=0, subset=["Test Acc", "Test F1"], color="#064e3b"),
-                 use_container_width=True, hide_index=True)
+    metrics = load_json("test_metrics.json")
+    if metrics is None:
+        st.info("Not found: `outputs/test_metrics.json`. Run `python evaluate_models.py`.")
+    else:
+        summary = pd.DataFrame([
+            {"Model": name, "Type": kind, "Test Acc": metrics[k]["test_acc"], "Test F1 (macro)": metrics[k]["test_f1_macro"]}
+            for k, (name, kind) in MODEL_LABELS.items() if k in metrics
+        ])
+        st.dataframe(summary.style.format({"Test Acc": "{:.1%}", "Test F1 (macro)": "{:.3f}"})
+                     .highlight_max(axis=0, subset=["Test Acc", "Test F1 (macro)"], color="#064e3b"),
+                     use_container_width=True, hide_index=True)
+        st.caption(f"Seed-42 stratified test split, n = {next(iter(metrics.values()))['n_test']:,}. Source: outputs/test_metrics.json (evaluate_models.py).")
 
     st.markdown("---")
     model_choice = st.selectbox(
@@ -438,19 +484,16 @@ elif page == "Model Performance":
     with c1:
         st.markdown('<div class="section-header">Training Curves</div>', unsafe_allow_html=True)
         p = os.path.join(OUTPUT_DIR, folder, curves_f)
-        if os.path.exists(p):
-            st.image(p, use_container_width=True)
+        show_image(p)
     with c2:
         st.markdown('<div class="section-header">Confusion Matrix</div>', unsafe_allow_html=True)
         p = os.path.join(OUTPUT_DIR, folder, cm_f)
-        if os.path.exists(p):
-            st.image(p, use_container_width=True)
+        show_image(p)
 
     if comp_f:
         st.markdown('<div class="section-header">Baseline vs Multimodal Comparison</div>', unsafe_allow_html=True)
         p = os.path.join(OUTPUT_DIR, folder, comp_f)
-        if os.path.exists(p):
-            st.image(p, use_container_width=True)
+        show_image(p)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # PAGE: DRIFT ANALYSIS
@@ -460,8 +503,16 @@ elif page == "Drift Analysis":
     st.markdown(
         "Each galaxy class is placed into a **256-dimensional embedding space** by the fusion model. "
         "We group galaxies by redshift bin and measure how the class *centroid* (average position) moves "
-        "across cosmic time — a proxy for morphological evolution."
+        "across redshift bins."
     )
+    control = load_json("drift_redshift_control.json")
+    if control:
+        st.info(
+            f"**Control:** redshift is one of the model's six metadata inputs. Holding the same {control['n_galaxies']} galaxies fixed "
+            f"and changing only the redshift input from z = {control['redshift_input_low']} to {control['redshift_input_mid']} moves the "
+            f"mean embedding by **{control['resnet18']:.2f}** (ResNet-18) / **{control['efficientnet_b0']:.2f}** (EfficientNet-B0). "
+            "Compare that with the low → mid drifts below: part of each drift comes from the redshift input, not only from the images."
+        )
 
     backbone = st.selectbox("Select model backbone", ["resnet18", "efficientnet_b0"],
                             format_func=lambda x: "ResNet-18 (Best)" if x == "resnet18" else "EfficientNet-B0")
@@ -470,17 +521,17 @@ elif page == "Drift Analysis":
     with col_img:
         st.markdown('<div class="section-header">Drift Curves</div>', unsafe_allow_html=True)
         img = os.path.join(OUTPUT_DIR, f"drift_{backbone}", "drift_curves.png")
-        if os.path.exists(img):
-            st.image(img, use_container_width=True)
+        show_image(img)
     with col_pop:
         st.markdown('<div class="section-header">Bin Population</div>', unsafe_allow_html=True)
         img = os.path.join(OUTPUT_DIR, f"drift_{backbone}", "bin_population.png")
-        if os.path.exists(img):
-            st.image(img, use_container_width=True)
+        show_image(img)
 
     st.markdown('<div class="section-header">Raw Drift Numbers</div>', unsafe_allow_html=True)
     df_drift = load_drift_csv(backbone)
-    if df_drift is not None:
+    if df_drift is None:
+        st.info(f"Not found: `outputs/drift_{backbone}/centroid_drift.csv`. Run `python drift_analysis.py --backbone {backbone}`.")
+    else:
         # Normalise column names (actual CSV uses: class, bin_from, bin_to, euclidean_drift, cosine_drift)
         if "transition" not in df_drift.columns:
             df_drift["transition"]  = df_drift["bin_from"] + " \u2192 " + df_drift["bin_to"]
@@ -552,8 +603,8 @@ elif page == "Galaxy Map":
         else:
             # Subsample if needed
             if len(coords) > n_show:
-                idx = np.random.choice(len(coords), n_show, replace=False)
-                idx.sort()
+                # Fixed seed: same subsample on every rerun, so a click selection survives the rerun.
+                idx = np.sort(np.random.default_rng(42).choice(len(coords), n_show, replace=False))
                 coords_s  = coords[idx]
                 labels_s  = labels.iloc[idx].reset_index(drop=True)
             else:
@@ -589,28 +640,23 @@ elif page == "Galaxy Map":
 
             # Image viewer on click/select
             st.markdown('<div class="section-header">Selected Galaxy Viewer</div>', unsafe_allow_html=True)
-            if selected and selected.get("selection") and selected["selection"].get("points"):
-                pts = selected["selection"]["points"]
-                img_cols = st.columns(min(len(pts), 5))
+            pts = (selected or {}).get("selection", {}).get("points", [])
+            if pts:
                 df_master = load_master()
-                if df_master is not None:
-                    # ensure dr7objid is string in master for stable matching
-                    df_master["dr7objid_str"] = df_master["dr7objid"].astype(str)
-                    
-                for i, pt in enumerate(pts[:5]):
-                    # customdata contains the original index from labels_s
-                    # but plotly returns it as a list in pt["customdata"]
-                    if "customdata" in pt and len(pt["customdata"]) > 0:
-                        idx = pt["customdata"][0]
-                        if idx < len(labels_s) and df_master is not None:
-                            objid = str(labels_s.iloc[idx].get("dr7objid", ""))
-                            subset = df_master[df_master["dr7objid_str"] == objid]
-                            if not subset.empty:
-                                row = subset.iloc[0]
-                                img_pil = get_image(row)
-                                if img_pil:
-                                    with img_cols[i]:
-                                        st.image(img_pil, caption=f"{row['morph_class']} · z={row['redshift']:.4f}", use_container_width=True)
+                for col, pt in zip(st.columns(min(len(pts), 5)), pts[:5]):
+                    cd = pt.get("customdata")
+                    if cd is None:
+                        continue
+                    # customdata is the row position in labels_s (a scalar; older Plotly sends a 1-item list)
+                    lab = labels_s.iloc[int(cd[0] if isinstance(cd, (list, tuple)) else cd)]
+                    caption = f"{lab['morph_class']} · z={lab['redshift']:.4f}"
+                    match = df_master[df_master["dr7objid"] == lab["dr7objid"]] if df_master is not None else []
+                    img_pil = get_image(match.iloc[0]) if len(match) else None
+                    with col:
+                        if img_pil:
+                            st.image(img_pil, caption=caption, use_container_width=True)
+                        else:
+                            st.caption(f"{caption}: image not available locally (images_gz2/ is not in the repo).")
             else:
                 st.info("Click on any dot in the map above to view the corresponding galaxy image here.")
 
@@ -619,10 +665,8 @@ elif page == "Galaxy Map":
     st.markdown('<div class="section-header">Static Comparison (Both Backbones)</div>', unsafe_allow_html=True)
     sc1, sc2 = st.columns(2)
     for col, bb in zip([sc1, sc2], ["resnet18", "efficientnet_b0"]):
-        p = os.path.join(OUTPUT_DIR, f"phase4_{bb}", f"{method}_static.png")
-        if os.path.exists(p):
-            with col:
-                st.image(p, caption=f"{method.upper()} — {bb}", use_container_width=True)
+        with col:
+            show_image(os.path.join(OUTPUT_DIR, f"phase4_{bb}", f"{method}_static.png"), caption=f"{method.upper()} — {bb}")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # PAGE: LIVE CLASSIFIER
@@ -646,14 +690,28 @@ elif page == "Live Classifier":
         if upload_mode == "Upload image":
             uploaded = st.file_uploader("Upload a JPEG galaxy cutout", type=["jpg", "jpeg", "png"])
             if uploaded:
-                img_pil = Image.open(uploaded).convert("RGB")
-                st.image(img_pil, caption="Uploaded galaxy", use_container_width=True)
+                try:
+                    img = Image.open(uploaded)  # reads the header only; pixels decode in convert()
+                    if img.width * img.height > 4096 * 4096:
+                        raise ValueError(f"{img.width}×{img.height} px is too large (max 4096×4096)")
+                    img_pil = img.convert("RGB")
+                    st.image(img_pil, caption="Uploaded galaxy", use_container_width=True)
+                except Exception as e:  # not an image, corrupt, or too large
+                    st.error(f"Could not use this image: {e}")
         else:
             df = load_master()
-            if df is not None:
+            if df is None:
+                st.warning("Dataset CSV not available (Hugging Face download failed). Use **Upload image** instead.")
+            else:
+                df = df[df["has_image"]]
+                if not os.path.isdir(IMG_DIR):
+                    st.caption(f"images_gz2/ not found: picking from the {len(df)} sample cutouts in sample_images/.")
                 sel_cls = st.selectbox("Pick class", ["random"] + CLASS_NAMES)
                 if st.button("Pick Random Galaxy"):
                     pool = df if sel_cls == "random" else df[df["morph_class"] == sel_cls]
+                    if pool.empty:
+                        st.warning("No galaxy images found locally for this class. Use **Upload image** instead.")
+                        st.stop()
                     galaxy_row = pool.sample(1).iloc[0]
                     st.session_state["galaxy_row"] = galaxy_row.to_dict()
                 if "galaxy_row" in st.session_state:
@@ -694,9 +752,7 @@ elif page == "Live Classifier":
                     except Exception as load_err:
                         st.error(f"Model load failed: {load_err}")
                         model, stats = None, None
-                    if model is None:
-                        st.error(f"No checkpoint found for {backbone}. Train the model first.")
-                    else:
+                    if model is not None:
                         try:
                             from torchvision import transforms
                             device = next(model.parameters()).device

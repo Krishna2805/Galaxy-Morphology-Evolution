@@ -4,7 +4,7 @@ Phase 4: t-SNE / UMAP Visualization of Galaxy Embeddings.
 Reads pre-computed 256-d embeddings from Phase 3 and reduces them to 2D
 using both UMAP and t-SNE. Outputs:
 
-  1. Interactive Plotly HTML maps (hover shows galaxy image + redshift)
+  1. Interactive Plotly HTML maps (hover shows class, redshift and object ID)
   2. Static side-by-side comparison PNG for reports
 
 Supports both backbones. Run once per backbone, or auto-detects both.
@@ -25,8 +25,6 @@ Usage:
 
 import argparse
 import os
-import base64
-import io
 import warnings
 warnings.filterwarnings("ignore")
 
@@ -35,8 +33,6 @@ import pandas as pd
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-from PIL import Image
-from tqdm import tqdm
 
 # Dimensionality reduction
 from sklearn.manifold import TSNE
@@ -45,11 +41,10 @@ try:
     UMAP_AVAILABLE = True
 except ImportError:
     UMAP_AVAILABLE = False
-    print("  [WARNING] umap-learn not installed. Skipping UMAP. Run: uv add umap-learn")
+    print("  [WARNING] umap-learn not installed (pip install -r requirements.txt). UMAP disabled.")
 
 # Interactive plotting
 import plotly.graph_objects as go
-import plotly.express as px
 
 from dataset import CLASS_NAMES, PROJECT_ROOT, IMAGE_DIR, MASTER_CSV
 
@@ -103,19 +98,6 @@ def load_embeddings(backbone):
     labels_df = pd.read_csv(label_path)
     print(f"  Loaded {len(embeddings):,} embeddings ({backbone})")
     return embeddings, labels_df
-
-
-def image_to_base64(img_path, size=(80, 80)):
-    """Convert a galaxy image to a base64 string for Plotly hover."""
-    try:
-        img = Image.open(img_path).convert("RGB")
-        img = img.resize(size, Image.LANCZOS)
-        buf = io.BytesIO()
-        img.save(buf, format="JPEG", quality=75)
-        b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
-        return f"data:image/jpeg;base64,{b64}"
-    except Exception:
-        return None
 
 
 def build_hover_text(labels_df, sample_idx):
@@ -342,7 +324,6 @@ def process_backbone(backbone, method, sample_size_override):
 
 
 def main():
-    global UMAP_AVAILABLE
     args = parse_args()
 
     print("=" * 60)
@@ -350,14 +331,8 @@ def main():
     print("=" * 60)
 
     if not UMAP_AVAILABLE and args.method in ("umap", "both"):
-        print("\n  [!] umap-learn not installed. Installing now...")
-        os.system("uv add umap-learn")
-        try:
-            import umap as _umap  # noqa
-            UMAP_AVAILABLE = True
-        except ImportError:
-            print("  [!] Install failed. Falling back to t-SNE only.")
-            args.method = "tsne"
+        print("\n  [!] umap-learn not installed: running t-SNE only. Install it with: pip install -r requirements.txt")
+        args.method = "tsne"
 
     backbones = ["resnet18", "efficientnet_b0"] if args.backbone == "all" else [args.backbone]
 

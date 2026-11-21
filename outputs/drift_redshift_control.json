@@ -1,0 +1,8 @@
+{
+  "n_galaxies": 256,
+  "redshift_input_low": 0.035,
+  "redshift_input_mid": 0.08,
+  "metric": "euclidean distance between mean embeddings (same images, only redshift input changed)",
+  "resnet18": 1.56,
+  "efficientnet_b0": 1.205
+}

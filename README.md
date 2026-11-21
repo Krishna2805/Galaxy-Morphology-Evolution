@@ -1,11 +1,10 @@
 # Galaxy Morphology Evolution Lab
 
 [![Hugging Face Model](https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-Weights%20%26%20Data-FFD21E)](https://huggingface.co/Krishna2805/galaxy-morphology-weights)
-![Streamlit Status](https://img.shields.io/badge/Streamlit-App_Live-FF4B4B?logo=streamlit)
-![PyTorch](https://img.shields.io/badge/PyTorch-2.1%2B-EE4C2C?logo=pytorch)
+![PyTorch](https://img.shields.io/badge/PyTorch-tested%202.15-EE4C2C?logo=pytorch)
 ![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB?logo=python)
 
-An end-to-end deep learning and observational astrophysics pipeline designed to investigate **how galaxy morphology evolves across cosmic lookback time**. By combining optical multi-spectral image cutouts from the Sloan Digital Sky Survey (SDSS DR7 / Galaxy Zoo 2) with 6 spectroscopic metadata features, the system mitigates cosmological resolution degradation bias and quantifies high-dimensional latent space centroid drift across cosmic redshift bins (`low_z → mid_z → high_z`).
+An end-to-end deep learning and observational astrophysics pipeline designed to investigate **how galaxy morphology evolves across cosmic lookback time**. By combining optical multi-spectral image cutouts from the Sloan Digital Sky Survey (SDSS DR7 / Galaxy Zoo 2) with 6 spectroscopic metadata features, the system classifies galaxy morphology and measures how each class's centroid in the learned 256-d embedding space shifts across redshift bins (`low_z → mid_z → high_z`).
 
 ---
 
@@ -13,7 +12,7 @@ An end-to-end deep learning and observational astrophysics pipeline designed to 
 
 As optical surveys capture galaxies at higher cosmological redshift (z), two observational biases emerge:
 1. **Cosmological Surface Brightness Dimming** (scaling with `(1 + z)^4`).
-2. **Spatial Resolution Degradation**: Faint disk structures and subtle spiral arms blur together, causing single-modal convolutional vision networks to systematically misclassify distant disk and spiral galaxies as featureless smooth/elliptical systems.
+2. **Spatial Resolution Degradation**: Faint disk structures and subtle spiral arms blur together, which can lead image-only networks to misclassify distant disk and spiral galaxies as featureless smooth/elliptical systems.
 
 ### Our Approach:
 1. **Multimodal Late Fusion (`MultimodalFusionNet`)**: Combines optical images (via pretrained ResNet-18 or EfficientNet-B0) with SDSS spectroscopic metadata (redshift z, color indices `u-r` and `g-i`, De Vaucouleurs profile fraction `fracdev_r`, half-light radius `petror50_r_kpc`, and surface brightness `mu50_r`).
@@ -21,10 +20,19 @@ As optical surveys capture galaxies at higher cosmological redshift (z), two obs
 3. **Centroid Drift Analysis**: Tracks morphological feature drift across science-driven redshift bins (`low_z: 0.01-0.06`, `mid_z: 0.06-0.10`, `high_z: 0.10-0.14`, `ext_z: 0.14-0.25`) using Euclidean distance and Cosine angular distance.
 4. **Manifold Projections**: Reduces embeddings to 2D manifolds via **UMAP** and **t-SNE** with interactive Plotly visual maps.
 
+### Results (seed-42 stratified test split, n = 7,064; source: `outputs/test_metrics.json`, written by `evaluate_models.py`)
+
+| Model | Test accuracy | Macro-F1 |
+|---|---|---|
+| ResNet-18 (image only) | 76.7% | 0.688 |
+| EfficientNet-B0 (image only) | 78.8% | 0.695 |
+| Multimodal ResNet-18 | 78.5% | **0.706** |
+| Multimodal EfficientNet-B0 | 75.3% | 0.674 |
+
 ### Key Findings:
-- **Disk Galaxies Drift the Most**: Exhibit the highest Euclidean centroid drift (4.07 from low_z → mid_z in ResNet-18), showing that observational blurring distorts both feature magnitude and representation angle.
-- **Spiral Galaxies Remain Stable**: Exhibit minimal latent drift (0.99 from mid_z → high_z), proving that prominent spiral arm features resist resolution degradation across lookback distance.
-- **Multimodal Superiority**: Incorporating spectroscopic metadata outperforms image-only backbones by ~2.1% in accuracy and +4.3% in macro F1-score.
+- **Metadata fusion helps ResNet-18, not EfficientNet-B0**: Multimodal ResNet-18 has the best macro-F1 (0.706), +1.8 pts accuracy and +1.8 pts macro-F1 over image-only ResNet-18. Multimodal EfficientNet-B0 is 3.5 pts accuracy and 2.2 pts macro-F1 *below* image-only EfficientNet-B0, which has the highest accuracy overall (78.8%).
+- **Disk galaxies show the largest centroid shift**: 4.07 (Euclidean) from low_z → mid_z with the ResNet-18 model; spiral mid_z → high_z shows the smallest, 0.99 (`outputs/drift_resnet18/centroid_drift.csv`).
+- **Redshift-input control**: redshift is one of the model's inputs, so it moves the embeddings by itself. Changing *only* the redshift input from z = 0.035 to 0.08 on the same 256 galaxies moves the mean embedding by 1.56 (ResNet-18) / 1.21 (EfficientNet-B0) (`outputs/drift_redshift_control.json`), against low_z → mid_z class drifts of 2.68–4.07 (ResNet-18). The drift numbers therefore combine image-driven change with the effect of the redshift input; separating the two (e.g. drift on image-branch-only embeddings) is future work.
 
 ---
 
@@ -45,7 +53,10 @@ Galaxy-Morphology-Evolution/
 ├── train_multimodal.py                 # Multimodal fusion model training script
 ├── drift_analysis.py                   # Centroid drift analysis across redshift bins
 ├── phase4_visualize.py                 # UMAP & t-SNE 2D manifold generation script
-└── galaxy_app.py                       # Streamlit interactive dashboard & live classifier
+├── evaluate_models.py                  # Test-split metrics + redshift-input control → outputs/*.json
+├── galaxy_app.py                       # Streamlit interactive dashboard & live classifier
+├── outputs/                            # Figures, drift tables, 2D maps the dashboard reads (~9.6 MB, committed)
+└── sample_images/                      # 32 test-split cutouts so the Live Classifier works without images_gz2/
 ```
 
 ---
@@ -55,14 +66,16 @@ Galaxy-Morphology-Evolution/
 Trained model checkpoints and dataset tables are hosted on the Hugging Face model repository:  
 👉 [**`Krishna2805/galaxy-morphology-weights`**](https://huggingface.co/Krishna2805/galaxy-morphology-weights)
 
-The application automatically streams and caches the following files to `checkpoints/` and the project root on first execution via `huggingface_hub`:
+On first run the app downloads these three files (the only ones hosted there) to `checkpoints/` and the project root via `huggingface_hub`:
 - **`multimodal_resnet18.pth`** (~45.5 MB): Pretrained PyTorch weights for `MultimodalFusionNet`
 - **`metadata_stats.pth`** (~1.9 KB): Normalization means and standard deviations for tabular spectroscopic metadata
 - **`galaxy_master_dataset.csv`** (~10.2 MB): Full 47,089-galaxy dataset table containing SDSS dr7objid, spectroscopic redshift, morphology classes, and photometric parameters
 
-**1-Line Verification Command:**
+`multimodal_efficientnet_b0.pth` (~17.8 MB) is also hosted; the app downloads it the first time you pick EfficientNet-B0 in the Live Classifier. Not hosted: the image-only baselines (train them with Step 1 below). Everything else the dashboard shows ships in the repo (`outputs/`, `sample_images/`).
+
+**1-Line Verification Command** (exit code 1 if any file is still missing):
 ```bash
-python -c "import galaxy_app; galaxy_app.ensure_weights_and_data(); print('Galaxy weights and dataset verified from Hugging Face!')"
+python -c "import sys, galaxy_app; ok = galaxy_app.ensure_weights_and_data(); print('OK: weights and dataset present' if ok else 'MISSING: see messages above'); sys.exit(0 if ok else 1)"
 ```
 
 ---
@@ -70,13 +83,16 @@ python -c "import galaxy_app; galaxy_app.ensure_weights_and_data(); print('Galax
 ## 📥 Dataset Acquisition & Cutouts
 
 - **Master Table**: Automatically downloaded via the Hugging Face auto-downloader as documented above.
-- **Raw Optical Cutouts (`images_gz2/`)**: If training vision backbones from scratch, 224x224 RGB JPEG galaxy cutouts can be acquired from:
-  - **Primary Data Portal**: [Galaxy Zoo 2 Data Tables (Data-GZ2)](https://data.galaxyzoo.org/)
-  - **Kaggle Mirror**: [Galaxy Zoo Challenge Data](https://www.kaggle.com/c/galaxy-zoo-the-galaxy-challenge/data)
+- **Raw Optical Cutouts (`images_gz2/`)**: needed only for training or re-running the pipeline. The 424×424 RGB JPEG cutouts (resized to 224×224 for the models) are named by Galaxy Zoo 2 `asset_id`: all 47,089 (`dr7objid`, filename) pairs in `galaxy_master_dataset.csv` match `gz2_filename_mapping.csv` in [Galaxy Zoo 2: Images from Original Sample](https://doi.org/10.5281/zenodo.3565489), whose `images_gz2.zip` (3.35 GB) holds the images. Extract it so the JPEGs sit directly in `images_gz2/` in the repo root (e.g. `images_gz2/110939.jpg`).
+
+### Data credits
+Images and morphology labels come from Galaxy Zoo 2 (Willett et al. 2013, MNRAS 435, 2835; Hart et al. 2016, MNRAS 461, 3663), built on Sloan Digital Sky Survey DR7 imaging. The cutouts in `images_gz2/` and the 32 in `sample_images/` are from the Galaxy Zoo team's image release, [doi:10.5281/zenodo.3565489](https://doi.org/10.5281/zenodo.3565489) (CC BY 4.0).
 
 ---
 
 ## ⚙️ Installation & Setup
+
+Python: the `pip` path works on Python 3.11+ (tested on 3.11.9 with PyTorch 2.15.0, CPU). The `uv` path follows `pyproject.toml` (Python 3.13+, `torch>=2.10.0`); its lockfile installs PyTorch 2.10.0 with CUDA 12.8, a version not re-tested here.
 
 ### Option A: Using `uv` (Recommended)
 
@@ -136,6 +152,12 @@ python drift_analysis.py --backbone efficientnet_b0
 ```bash
 python phase4_visualize.py --backbone resnet18 --method both
 python phase4_visualize.py --backbone efficientnet_b0 --method both
+```
+
+**Step 5: Test-Split Metrics and Redshift-Input Control** (writes `outputs/test_metrics.json`, `outputs/drift_redshift_control.json`)
+```bash
+python evaluate_models.py                     # ~35 min on CPU for all four models
+python evaluate_models.py --redshift-control  # ~1 min
 ```
 
 ---

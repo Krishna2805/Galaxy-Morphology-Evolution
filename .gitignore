@@ -8,6 +8,10 @@ __pycache__/
 venv/
 env/
 .env
+.env.*
+credentials.json
+*.token
+token
 
 # IDEs and editors
 .vscode/
@@ -48,7 +52,17 @@ Documentations/
 galaxy_master_dataset.csv
 images_gz2/
 checkpoints/
-outputs/
 *.pth
 *.pt
 *.csv
+
+# outputs/: commit only what the dashboard reads (~9 MB) so a fresh clone renders every page.
+# Not committed: embeddings.npy (48 MB each; regenerate with drift_analysis.py) and *_interactive.html.
+outputs/**
+!outputs/**/
+!outputs/**/*.png
+!outputs/*.json
+!outputs/drift_*/centroid_drift.csv
+!outputs/drift_*/embedding_labels.csv
+!outputs/phase4_*/*_coords.npy
+!outputs/phase4_*/*_sample_idx.npy
