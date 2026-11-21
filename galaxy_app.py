@@ -170,11 +170,27 @@ def ensure_weights_and_data():
 # ─────────────────────────────────────────────────────────────────────────────
 # Data loaders (cached)
 # ─────────────────────────────────────────────────────────────────────────────
-@st.cache_data(show_spinner=False)
+def _if_missing(value):
+    """Wrap a cached loader: a missing file returns `value` instead of raising. Streamlit doesn't cache
+    exceptions, so the file is looked for again on the next run (e.g. after a retried download)."""
+    def deco(fn):
+        def wrapper(*args):
+            try:
+                return fn(*args)
+            except FileNotFoundError:
+                return value
+        return wrapper
+    return deco
+
+
 def load_master():
-    ensure_weights_and_data()
-    if not os.path.exists(MASTER_CSV):
-        return None
+    ensure_weights_and_data()  # outside the cache, so a failed download is retried on the next run
+    return _read_master()
+
+
+@_if_missing(None)
+@st.cache_data(show_spinner=False)
+def _read_master():
     df = pd.read_csv(MASTER_CSV)
     # Full image set if present; otherwise the 32 cutouts committed in sample_images/.
     img_dir = IMG_DIR if os.path.isdir(IMG_DIR) else SAMPLE_IMG_DIR
@@ -188,7 +204,7 @@ def load_master():
 def show_image(path, caption=None):
     """st.image, or a visible note saying which output file is missing."""
     if os.path.exists(path):
-        st.image(path, caption=caption, use_container_width=True)
+        st.image(path, caption=caption, width="stretch")
     else:
         st.info(f"Not found: `{os.path.relpath(path, ROOT_DIR)}`. It is written by the pipeline scripts (see README → Pipeline).")
 
@@ -210,22 +226,19 @@ MODEL_LABELS = {  # key in outputs/test_metrics.json -> (display name, type)
 }
 
 
+@_if_missing(None)
 @st.cache_data(show_spinner=False)
 def load_drift_csv(backbone):
-    path = os.path.join(OUTPUT_DIR, f"drift_{backbone}", "centroid_drift.csv")
-    if not os.path.exists(path):
-        return None
-    return pd.read_csv(path)
+    return pd.read_csv(os.path.join(OUTPUT_DIR, f"drift_{backbone}", "centroid_drift.csv"))
 
 
+@_if_missing((None, None))
 @st.cache_data(show_spinner=False)
 def load_embeddings_phase4(backbone, method):
     d = os.path.join(OUTPUT_DIR, f"phase4_{backbone}")
     coords_path = os.path.join(d, f"{method}_coords.npy")
     idx_path    = os.path.join(d, f"{method}_sample_idx.npy")
     labels_path = os.path.join(OUTPUT_DIR, f"drift_{backbone}", "embedding_labels.csv")
-    if not all(os.path.exists(p) for p in [coords_path, idx_path, labels_path]):
-        return None, None
     coords = np.load(coords_path)
     idx    = np.load(idx_path)
     labels = pd.read_csv(labels_path)
@@ -375,7 +388,7 @@ elif page == "EDA":
                 template="plotly_dark",
             )
             fig.update_layout(showlegend=False, title="Galaxy Class Counts")
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
 
     with tab2:
         st.markdown('<div class="section-header">Redshift Distribution</div>', unsafe_allow_html=True)
@@ -394,7 +407,7 @@ elif page == "EDA":
             fig.add_vline(x=0.06, line_dash="dash", line_color="white", annotation_text="low/mid boundary")
             fig.add_vline(x=0.10, line_dash="dash", line_color="yellow", annotation_text="mid/high boundary")
             fig.add_vline(x=0.14, line_dash="dash", line_color="red", annotation_text="ext boundary")
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
 
     with tab3:
         st.markdown('<div class="section-header">Color–Redshift Correlations</div>', unsafe_allow_html=True)
@@ -410,7 +423,7 @@ elif page == "EDA":
                 title="u−r Color vs Redshift",
                 labels={"redshift": "Redshift (z)", "color_u_r": "u−r (extinction corrected)"},
             )
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
 
     with tab4:
         st.markdown('<div class="section-header">Structural Features</div>', unsafe_allow_html=True)
@@ -425,7 +438,7 @@ elif page == "EDA":
                 title="FRACDEV_R by Class (0=disk, 1=elliptical profile)",
                 labels={"morph_class": "Class", "fracdev_r": "FRACDEV_R"},
             )
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
 
     with tab5:
         st.markdown('<div class="section-header">Sample Galaxy Images</div>', unsafe_allow_html=True)
@@ -442,7 +455,7 @@ elif page == "EDA":
                 img_pil = get_image(row)
                 if img_pil:
                     with cols[i % 6]:
-                        st.image(img_pil, caption=f"{row['morph_class']} · z={row['redshift']:.3f}", use_container_width=True)
+                        st.image(img_pil, caption=f"{row['morph_class']} · z={row['redshift']:.3f}", width="stretch")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # PAGE: MODEL PERFORMANCE
@@ -462,7 +475,7 @@ elif page == "Model Performance":
         ])
         st.dataframe(summary.style.format({"Test Acc": "{:.1%}", "Test F1 (macro)": "{:.3f}"})
                      .highlight_max(axis=0, subset=["Test Acc", "Test F1 (macro)"], color="#064e3b"),
-                     use_container_width=True, hide_index=True)
+                     width="stretch", hide_index=True)
         st.caption(f"Seed-42 stratified test split, n = {next(iter(metrics.values()))['n_test']:,}. Source: outputs/test_metrics.json (evaluate_models.py).")
 
     st.markdown("---")
@@ -540,7 +553,7 @@ elif page == "Drift Analysis":
         if "euclidean" not in df_drift.columns:
             df_drift["euclidean"]   = df_drift["euclidean_drift"]
 
-        st.dataframe(df_drift, use_container_width=True, hide_index=True)
+        st.dataframe(df_drift, width="stretch", hide_index=True)
 
         # Interactive drift bar chart
         fig = px.bar(
@@ -550,7 +563,7 @@ elif page == "Drift Analysis":
             title=f"Euclidean Centroid Drift ({backbone})",
             labels={"euclidean": "Euclidean Distance", "transition": "Redshift Transition", "morph_class": "Class"},
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
 
     # Side-by-side comparison of both backbones
     st.markdown('<div class="section-header">ResNet-18 vs EfficientNet-B0 Comparison</div>', unsafe_allow_html=True)
@@ -575,7 +588,7 @@ elif page == "Drift Analysis":
             labels={"euclidean": "Euclidean Distance", "transition": "Transition"},
         )
         fig2.update_layout(height=450)
-        st.plotly_chart(fig2, use_container_width=True)
+        st.plotly_chart(fig2, width="stretch")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # PAGE: GALAXY MAP
@@ -636,7 +649,7 @@ elif page == "Galaxy Map":
                 hoverlabel=dict(bgcolor="#0f3460", font=dict(color="white", size=13)),
                 clickmode="event+select",
             )
-            selected = st.plotly_chart(fig, use_container_width=True, on_select="rerun", key="galaxy_map")
+            selected = st.plotly_chart(fig, width="stretch", on_select="rerun", key="galaxy_map")
 
             # Image viewer on click/select
             st.markdown('<div class="section-header">Selected Galaxy Viewer</div>', unsafe_allow_html=True)
@@ -654,7 +667,7 @@ elif page == "Galaxy Map":
                     img_pil = get_image(match.iloc[0]) if len(match) else None
                     with col:
                         if img_pil:
-                            st.image(img_pil, caption=caption, use_container_width=True)
+                            st.image(img_pil, caption=caption, width="stretch")
                         else:
                             st.caption(f"{caption}: image not available locally (images_gz2/ is not in the repo).")
             else:
@@ -695,7 +708,7 @@ elif page == "Live Classifier":
                     if img.width * img.height > 4096 * 4096:
                         raise ValueError(f"{img.width}×{img.height} px is too large (max 4096×4096)")
                     img_pil = img.convert("RGB")
-                    st.image(img_pil, caption="Uploaded galaxy", use_container_width=True)
+                    st.image(img_pil, caption="Uploaded galaxy", width="stretch")
                 except Exception as e:  # not an image, corrupt, or too large
                     st.error(f"Could not use this image: {e}")
         else:
@@ -718,7 +731,7 @@ elif page == "Live Classifier":
                     galaxy_row = pd.Series(st.session_state["galaxy_row"])
                     img_pil = get_image(galaxy_row)
                     if img_pil:
-                        st.image(img_pil, caption=f"True class: {galaxy_row['morph_class']} · z={galaxy_row['redshift']:.4f}", use_container_width=True)
+                        st.image(img_pil, caption=f"True class: {galaxy_row['morph_class']} · z={galaxy_row['redshift']:.4f}", width="stretch")
 
         st.markdown("#### SDSS Metadata")
         if galaxy_row is not None:
@@ -742,7 +755,7 @@ elif page == "Live Classifier":
     with col_out:
         st.markdown("#### Prediction")
 
-        if st.button("Classify This Galaxy", type="primary", use_container_width=True):
+        if st.button("Classify This Galaxy", type="primary", width="stretch"):
             if img_pil is None:
                 st.warning("Please provide a galaxy image first.")
             else:
@@ -802,7 +815,7 @@ elif page == "Live Classifier":
                             )
                             fig.update_layout(showlegend=False, yaxis_range=[0, 1],
                                               yaxis_tickformat=".0%")
-                            st.plotly_chart(fig, use_container_width=True)
+                            st.plotly_chart(fig, width="stretch")
 
                             # Ground truth comparison
                             if galaxy_row is not None:

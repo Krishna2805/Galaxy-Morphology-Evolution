@@ -57,8 +57,8 @@ CHECKPOINT_DIR = os.path.join(PROJECT_ROOT, "checkpoints")
 OUTPUT_BASE_DIR = os.path.join(PROJECT_ROOT, "outputs")
 
 # Science-driven redshift bins (per collaborator feedback)
-# Spiral, disk, and edge_on vanish above z ≈ 0.13 due to SDSS resolution effects.
-# Hart et al.'s debiasing helps but doesn't fully eliminate this.
+# Spiral, disk and edge_on thin out at higher z (beyond z = 0.14 the dataset has 793 spiral, 234 disk and
+# 25 edge_on vs 2,210 smooth galaxies), so the main bins stop at 0.14.
 REDSHIFT_BINS = [
     ("low_z",  0.01, 0.06),   # All classes well-populated
     ("mid_z",  0.06, 0.10),   # All classes well-populated
